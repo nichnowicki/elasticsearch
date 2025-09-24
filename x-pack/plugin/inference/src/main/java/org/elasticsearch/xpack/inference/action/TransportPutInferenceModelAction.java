@@ -25,6 +25,7 @@ import org.elasticsearch.core.TimeValue;
 import org.elasticsearch.index.mapper.StrictDynamicMappingException;
 import org.elasticsearch.inference.InferenceService;
 import org.elasticsearch.inference.InferenceServiceRegistry;
+import org.elasticsearch.inference.MinimalServiceSettings;
 import org.elasticsearch.inference.Model;
 import org.elasticsearch.inference.ModelConfigurations;
 import org.elasticsearch.inference.TaskType;
@@ -43,6 +44,7 @@ import org.elasticsearch.xpack.core.ml.inference.assignment.TrainedModelAssignme
 import org.elasticsearch.xpack.core.ml.job.messages.Messages;
 import org.elasticsearch.xpack.core.ml.utils.ExceptionsHelper;
 import org.elasticsearch.xpack.inference.InferencePlugin;
+import org.elasticsearch.xpack.inference.mapper.SemanticTextField;
 import org.elasticsearch.xpack.inference.registry.ModelRegistry;
 import org.elasticsearch.xpack.inference.services.ServiceUtils;
 import org.elasticsearch.xpack.inference.services.elasticsearch.ElasticsearchInternalService;
@@ -180,7 +182,49 @@ public class TransportPutInferenceModelAction extends TransportMasterNodeAction<
             );
             return;
         }
+///////////////////////////////////////////////////////////////////
+        for(var entry : state.metadata().indices().entrySet()){
+            var indexMetadata = entry.getValue();
+            var mapping = indexMetadata.mapping();
 
+            if (mapping == null || mapping.source == null){
+                continue;
+            }
+
+            Map<String, Object> mapSource = mapping.sourceAsMap();
+            Map<String, Object> properties = (Map<String, Object>) mapSource.get("properties");
+            
+            if (properties == null){
+                continue;
+            }
+            
+            for (var propEntry : properties.entrySet()){
+                Map<String, Object> propMap = (Map<String, Object>) propEntry.getValue();
+                
+                if ("semantic_text".equals(propMap.get("type"))){
+                    var modelSettings = SemanticTextField.parseModelSettingsFromMap(propMap);
+                    
+                    if (modelSettings != null && request.getInferenceEntityId().equals(modelSettings.service())){
+                        TaskType currentTaskType = modelSettings.taskType();
+                        Integer currentDimensions = modelSettings.dimensions();
+                        SimilarityMeasure currentSimilarity = modelSettings.similarity();
+
+                        //boolean works = currentTaskType.equals(resolvedTaskType) && 
+                        
+                        if (!currentTaskType.equals(resolvedTaskType)){
+                            listener.onFailure(
+                                new ElasticsearchStatusException(
+                                    "Cannot create inference endpoint [" + request.getInferenceEntityId() +"] with task type [" + resolvedTaskType + 
+                                    "] because a semantic_text field uses it with task type [" + currentTaskType + "]", 
+                                    RestStatus.BAD_REQUEST
+                                ));
+                            return;
+                        }
+                    }
+                }
+            }
+        }
+/////////////////////////////////////////////////////////////////////////
         parseAndStoreModel(service.get(), request.getInferenceEntityId(), resolvedTaskType, requestAsMap, request.getTimeout(), listener);
     }
 
